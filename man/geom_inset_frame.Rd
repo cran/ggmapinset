@@ -2,50 +2,56 @@
 % Please edit documentation in R/geom_inset_frame.R
 \name{geom_inset_frame}
 \alias{geom_inset_frame}
-\title{Add a frame and burst lines for an inset.}
+\title{Add a frame and burst lines for an inset}
 \usage{
 geom_inset_frame(
   mapping = ggplot2::aes(),
   data = NULL,
-  stat = "sf",
+  stat = "sf_inset",
   position = "identity",
   ...,
-  inset = NULL,
+  inset = NA,
   na.rm = FALSE,
+  source.aes = list(),
+  target.aes = list(),
+  lines.aes = list(),
   show.legend = NA,
   inherit.aes = FALSE
 )
 }
 \arguments{
-\item{mapping, data, stat, position, na.rm, show.legend, inherit.aes, ...}{See \code{\link[ggplot2:ggsf]{ggplot2::geom_sf()}}}
+\item{mapping, data, stat, position, na.rm, show.legend, inherit.aes, ...}{See \code{\link[ggplot2:ggsf]{ggplot2::geom_sf()}}.}
 
-\item{inset}{Inset configuration; see \code{\link[=configure_inset]{configure_inset()}}.}
+\item{inset}{Inset configuration; see \code{\link[=configure_inset]{configure_inset()}}.
+If \code{NA} (the default), this is inherited from the coord (see \code{\link[=coord_sf_inset]{coord_sf_inset()}}).}
+
+\item{source.aes, target.aes, lines.aes}{Override the aesthetics of the
+inset source, target, and lines respectively. The value should be a list
+named by the aesthetics, and the values should be scalars of length one.}
 }
 \value{
 A ggplot layer holding the inset frame.
 }
 \description{
-Add a frame and burst lines for an inset.
+Add a frame and burst lines for an inset
 }
-\section{Controlling aesthetics}{
+\section{Limitation}{
 
-Aesthetic mappings or parameters can be provided. They can be scalars, or
-vectors of length 4 (times the number of panels when faceting) corresponding
-in order to the source circle, target circle, then the two line segments
-connecting them, respectively. Note that the connecting lines might not be
-drawn if the inset and original circle overlap, which will affect the count.
+The frame cannot be drawn without another sf layer that contains data due to
+a limitation of the ggplot layout evaluation. Attempting to plot a frame by
+itself will result in the error:
+"Scale limits cannot be mapped onto spatial coordinates in \code{coord_sf()}".
 }
 
 \examples{
-library(sf)
 library(ggplot2)
 
-cfg <- configure_inset(
-  centre = st_sfc(st_point(c(-82, 35)), crs = 4326),
-  scale = 2,
-  translation = c(0, -300),
-  radius = 50,
-  units = "mi")
+nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
 
-ggplot() + geom_inset_frame(inset = cfg) + coord_sf()
+ggplot(nc) +
+  geom_sf_inset() +
+  geom_inset_frame() +
+  coord_sf_inset(inset = configure_inset(
+    centre = sf::st_sfc(sf::st_point(c(-82, 35)), crs = 4326),
+    scale = 2, translation = c(0, -300), radius = 50, units = "mi"))
 }

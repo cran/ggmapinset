@@ -1,59 +1,68 @@
 #' Visualise sf objects with insets
 #'
-#' This is a wrapper around [ggplot2::geom_sf()] that assists with creating map
-#' insets.
+#' These geoms are wrappers around [ggplot2::geom_sf()] and its relatives that
+#' assist with creating map insets.
+#' In many cases all that is needed is to use [coord_sf_inset()] with [configure_inset()]
+#' to configure the location and transformation of the inset, and then replace the
+#' sf-related geoms with their `_inset` counterparts.
+#' Use [geom_inset_frame()] to add a frame around the inset that connects it to the main map.
 #'
-#' First, configure an inset using [configure_inset()], then pass the
-#' configuration object to each applicable layer using the \code{inset}
-#' parameter.
+#' Internally this works by creating two layers: one for the base map, and one
+#' for the inset. These can be separately controlled by the `map_base` and
+#' `map_inset` parameters. If `inset` is not specified, this geom will instead
+#' behave like [ggplot2::geom_sf()].
 #'
-#' After specifying all your usual geoms, use [geom_inset_frame()] to add a frame
-#' around the inset that connects it to the main map.
+#' When an inset is configured, the default creates both base and inset layers
+#' using the same aesthetic mapping and params:
 #'
-#' Internally this works by inserting duplicates of the \code{geom_sf()} layers
-#' where the duplicates have been transformed and cropped to fit into the inset.
-#' The way that this copying works can be controlled with the \code{inset_copy}
-#' parameter if for example you'd like a different aesthetic mapping for the
-#' copy that goes in the inset. The default copies the layers:
+#'     geom_sf_inset(...)
 #'
-#'     geom_sf_inset(aes(...), inset = inset_cfg, ...)
+#' You can alternatively specify the two layers separately:
 #'
-#' but this version specifies them separately:
+#'     # draw the base map only (both versions are equivalent):
+#'     geom_sf(...)
+#'     geom_sf_inset(..., map_inset = "none")
 #'
-#'     # aesthetics for main map only:
-#'     geom_sf(aes(...), ...)
-#'     # aesthetics for inset map only:
-#'     geom_sf_inset(aes(...), inset = inset_cfg, inset_copy = FALSE, ...)
+#'     # separately, draw the inset map only:
+#'     geom_sf_inset(..., map_base = "none")
+#'
+#' `stat_sf_inset()` works the same [ggplot2::stat_sf()] except that it also
+#' expands the axis limits to account for the inset area.
 #'
 #' @param inset Inset configuration; see [configure_inset()].
-#' @param inset_copy Draw both the base layers and the inset layers using the same
-#'   configuration. Only relevant when \code{inset} is specified.
-#' @param inset_clip When an inset is drawn, place included points only in the inset.
-#' @param mapping,data,stat,position,na.rm,show.legend,inherit.aes,... See [ggplot2::geom_sf()]
+#'   If `NA` (the default), this is inherited from the coord (see [coord_sf_inset()]).
+#' @param map_base Controls the layer with the base map. Possible values are
+#'   `"normal"` to create a layer as though the inset were not specified,
+#'   `"clip"` to create a layer with the inset viewport cut out, and
+#'   `"none"` to prevent the insertion of a layer for the base map.
+#' @param map_inset Controls the layer with the inset map. Possible values are
+#'   `"auto"` to choose the behaviour based on whether \code{inset} is specified,
+#'   `"normal"` to create a layer with the viewport cut out and transformed, and
+#'   `"none"` to prevent the insertion of a layer for the viewport map.
+#' @param mapping,data,stat,geom,position,na.rm,show.legend,inherit.aes,...
+#'   See [ggplot2::geom_sf()].
 #'
 #' @returns A ggplot layer similar to [ggplot2::geom_sf()] but transformed according to the
 #'   inset configuration.
 #' @export
 #'
 #' @examples
-#' library(sf)
 #' library(ggplot2)
 #'
 #' nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
-#' cfg <- configure_inset(
-#'   centre = st_sfc(st_point(c(-82, 35)), crs = 4326),
-#'   scale = 2,
-#'   translation = c(10, -60),
-#'   radius = 50,
-#'   units = "mi")
 #'
-#' ggplot(nc) + geom_sf_inset(aes(fill = AREA), inset = cfg) + coord_sf()
+#' ggplot(nc) +
+#'   geom_sf_inset(aes(fill = AREA)) +
+#'   geom_inset_frame() +
+#'   coord_sf_inset(inset = configure_inset(
+#'     centre = sf::st_sfc(sf::st_point(c(-80, 35.5)), crs = sf::st_crs(nc)),
+#'     scale = 1.5, translation = c(-50, -140), radius = 50, units = "mi"))
 geom_sf_inset <- function(mapping = ggplot2::aes(), data = NULL,
-                          stat = "sf", position = "identity",
+                          stat = "sf_inset", position = "identity",
                           ...,
-                          inset = NULL,
-                          inset_copy = TRUE,
-                          inset_clip = FALSE,
+                          inset = NA,
+                          map_base = "normal",
+                          map_inset = "auto",
                           na.rm = TRUE,
                           show.legend = NA,
                           inherit.aes = TRUE) {
@@ -63,80 +72,73 @@ geom_sf_inset <- function(mapping = ggplot2::aes(), data = NULL,
                         stat = stat, position = position,
                         show.legend = show.legend, inherit.aes = inherit.aes,
                         params = params, inset = inset,
-                        inset_copy = inset_copy, inset_clip = inset_clip)
+                        map_base = map_base, map_inset = map_inset)
 }
 
 #' @export
 #' @usage NULL
 #' @format NULL
 #' @rdname geom_sf_inset
-#' @importFrom utils modifyList
 GeomSfInset <- ggplot2::ggproto("GeomSfInset", ggplot2::GeomSf,
-  default_aes = modifyList(ggplot2::GeomSf$default_aes,
-                           list(inset = NULL, inset_invert = FALSE, inset_enable = TRUE),
-                           keep.null = TRUE),
-
-  draw_panel = function(self, data, ...) {
-    if (!is.null(data[["inset"]])) {
-      inset <- make_inset_config(data$inset[[1]])
-      geom <- data$geometry
-      if (!inherits(geom, "sfc")) geom <- sf::st_geometry(geom)
-
-      if (data$inset_enable[[1]]) {
-        inset_geom <- crop_inset_circle(geom,
-                                        centre = inset_centre(inset),
-                                        radius = inset_radius(inset),
-                                        scale = inset_scale(inset),
-                                        translation = inset_translation(inset),
-                                        crs_working = inset_crs_working(inset))
-        data <- data[attr(inset_geom, "retained"),]
-        data$geometry <- inset_geom
-      } else if (data$inset_invert[[1]]) {
-        inset_geom <- clip_inset_circle(geom,
-                                        centre = inset_centre(inset),
-                                        radius = inset_radius(inset),
-                                        crs_working = inset_crs_working(inset))
-        data <- data[attr(inset_geom, "retained"),]
-        data$geometry <- inset_geom
-      }
+  draw_panel = function(self, data, panel_params, coord,
+                        inset = NA, inset_mode = "normal", ...) {
+    inset <- get_inset_config(inset, coord)
+    if (!is.null(inset) && inset_mode != "none") {
+      data <- switch(inset_mode,
+                     normal = transform_only_viewport(data, inset),
+                     cutout = remove_viewport(data, inset))
     }
 
-    ggplot2::ggproto_parent(ggplot2::GeomSf, self)$draw_panel(data, ...)
-  }
+    ggplot2::GeomSf$draw_panel(data, panel_params, coord, ...)
+  },
+
+  # NOTE: this is a workaround for a ggplot2 behaviour/bug
+  # https://github.com/tidyverse/ggplot2/issues/1516#issuecomment-1507927792
+  draw_group = function(self, data, panel_params, coord,
+                        inset = NULL, inset_mode = "normal", ...) { }
 )
 
-crop_inset_circle <- function(x, centre, radius, scale, translation,
-                              crs_working) {
-  crs_orig <- sf::st_crs(x)
+transform_only_viewport <- function(data, inset) {
+  inset <- make_inset_config(inset)
+  viewport <- inset_viewport(inset)
+  result <- with_crs_working(
+    inset_crs_working(inset),
+    sf::st_sf(data), inset_centre(inset),
+    .f = function(data, centre) {
+      result <- clip_to_viewport(data$geometry, viewport)
+      geometry <- transform(result[["geometry"]], centre,
+                            scale = inset_scale(inset),
+                            translation = inset_translation(inset))
+      data <- data[result[["retained"]],]
+      data$geometry <- geometry
+      data
+    })
 
-  centre <- sf::st_transform(centre, crs_working)
-  viewport <- sf::st_buffer(centre, radius)
-  x <- sf::st_transform(x, crs_working)
-  result <- sf::st_intersection(x, viewport)
-  retained <- attr(result, "idx")[,1]
-
-  if (!is.null(scale)) {
-    result <- (result - centre) * scale + centre
-    result <- sf::st_set_crs(result, crs_working)
+  if (nrow(result) == 0 && nrow(data) != 0) {
+    cli::cli_warn(c("None of the spatial data is inside the inset viewport",
+                     "i" = "Check your inset configuration to ensure the centre, radius, and units are correct"))
   }
-  if (!is.null(translation)) {
-    result <- sf::st_set_crs(result + translation, crs_working)
-  }
 
-  result <- sf::st_transform(result, crs_orig)
-  attr(result, "retained") <- retained
   result
 }
 
-clip_inset_circle <- function(x, centre, radius, crs_working) {
-  crs_orig <- sf::st_crs(x)
+remove_viewport <- function(data, inset) {
+  inset <- make_inset_config(inset)
+  viewport <- inset_viewport(inset)
+  result <- with_crs_working(
+    inset_crs_working(inset),
+    sf::st_sf(data), inset_centre(inset),
+    .f = function(data, centre) {
+      result <- clip_away_viewport(data$geometry, viewport)
+      data <- data[result[["retained"]],]
+      data$geometry <- result[["geometry"]]
+      data
+    })
 
-  centre <- sf::st_transform(centre, crs_working)
-  viewport <- sf::st_buffer(centre, radius)
-  x <- sf::st_transform(x, crs_working)
-  result <- sf::st_difference(x, viewport)
-  retained <- attr(result, "idx")[,1]
-  result <- sf::st_transform(result, crs_orig)
-  attr(result, "retained") <- retained
+  if (nrow(result) == 0 && nrow(data) != 0) {
+    cli::cli_warn(c("None of the spatial data is outside the inset viewport",
+                     "i" = "Check your inset configuration to ensure the centre, radius, and units are correct"))
+  }
+
   result
 }
