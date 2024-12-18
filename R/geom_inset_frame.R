@@ -1,5 +1,18 @@
 #' Add a frame and burst lines for an inset
 #'
+#' The frame is computed from the inset configuration, so any \code{data} passed
+#' to this layer is ignored. The frame is an sf object consisting of three features:
+#' the source area, the target area (a scaled and translated version of the source
+#' area), and the connecting/burst lines.
+#'
+#' Burst lines for circular insets are bitangenets (tangent to both the source and
+#' target circles) or absent if the circles are nested.
+#' Burst lines for rectangular insets are the shortest line from each corner of the
+#' source rectangle to any corner of the target rectangle, after excluding any such
+#' lines that intersect either rectangle or each other.
+#' When the burst lines are absent due to geometrical constraints, there will still
+#' be a corresponding (empty) feature in the frame layer's data.
+#'
 #' @section Limitation:
 #' The frame cannot be drawn without another sf layer that contains data due to
 #' a limitation of the ggplot layout evaluation. Attempting to plot a frame by
@@ -23,10 +36,15 @@
 #'
 #' ggplot(nc) +
 #'   geom_sf_inset() +
-#'   geom_inset_frame() +
+#'   geom_inset_frame(
+#'     source.aes = list(fill = "red", alpha = 0.2, linewidth = 0),
+#'     target.aes = list(colour = "blue"),
+#'     lines.aes = list(linetype = 2, linewidth = 2)
+#'   ) +
 #'   coord_sf_inset(inset = configure_inset(
-#'     centre = sf::st_sfc(sf::st_point(c(-82, 35)), crs = 4326),
-#'     scale = 2, translation = c(0, -300), radius = 50, units = "mi"))
+#'     shape_circle(centre = c(-82, 35), radius = 50),
+#'     scale = 5, translation = c(0, -260), units = "mi"
+#'   ))
 geom_inset_frame <- function(mapping = ggplot2::aes(),
                              data = NULL,
                              stat = "sf_inset", position = "identity",
@@ -46,7 +64,7 @@ geom_inset_frame <- function(mapping = ggplot2::aes(),
                          lines.aes = lines.aes, inset = inset, ...)
 
   layer <- ggplot2::layer_sf(
-    data = dummy_burst_circle(),
+    data = dummy_frame(),
     mapping = mapping,
     stat = stat,
     geom = GeomSfInsetFrame,
@@ -61,14 +79,32 @@ geom_inset_frame <- function(mapping = ggplot2::aes(),
 
 frame_params <- c("source.aes", "target.aes", "lines.aes")
 
+get_sf_aes_default <- function(aes_name) {
+  line_def <- ggplot2::GeomLine$default_aes[[aes_name]]
+  polygon_def <- ggplot2::GeomPolygon$default_aes[[aes_name]]
+  if (aes_name == "fill") polygon_def <- NA_character_
+  else if (aes_name == "colour") return(rep("grey40", 3))
+  else if (aes_name == "linewidth") return(rep(0.2, 3))
+
+  values <- c(polygon_def, polygon_def, line_def)
+  if (aes_name == "alpha") values <- as.numeric(values)
+
+  values
+}
+
+
+#' @importFrom vctrs vec_slice
 GeomSfInsetFrame <- ggplot2::ggproto("GeomSfInsetFrame", ggplot2::GeomSf,
   extra_params = c(ggplot2::GeomSf$extra_params, frame_params, "inset"),
 
-  default_aes = ggplot2::aes(
-    linewidth = 0.4,
-    stroke = 0.4,
-    colour = "gray40",
-    fill = NA,
+  default_aes = modifyList(
+    ggplot2::GeomSf$default_aes,
+    list(
+      fill = NA_character_,
+      colour = "grey40",
+      linewidth = 0.2,
+      alpha = NA_real_
+    )
   ),
 
   setup_data = function(data, params) {
@@ -81,35 +117,34 @@ GeomSfInsetFrame <- ggplot2::ggproto("GeomSfInsetFrame", ggplot2::GeomSf,
 
   draw_layer = function(self, data, params, layout, coord) {
     n_panels <- nlevels(as.factor(data$PANEL))
-    offsets <- seq(1L, n_panels * 4L, 4L)
+    offsets <- seq(1L, n_panels * 3L, 3L)
 
     # replace the dummy data with the real configured inset
     inset <- get_inset_config(params$inset, coord)
     if (is.null(inset)) {
       cli::cli_abort("Inset configuration is required for {.fn geom_inset_frame}")
     }
-    frame <- make_burst_circle(inset)
+    frame <- make_frame(inset)
     data$geometry <- rep(frame, n_panels)
 
+    extra_cols <- setdiff(
+      c(names(params$source.aes), names(params$target.aes), names(params$lines.aes)),
+      names(data)
+    )
+    for (param in extra_cols) {
+      data[, param] <- rep(get_sf_aes_default(param), n_panels)
+    }
+
     for (param in names(params$source.aes)) {
-      if (!param %in% names(data)) {
-        cli::cli_abort("Parameter {.arg {param}} in {.arg source.aes} does not exist in the layer data")
-      }
-      data[,param][offsets + 0L] <- params$source.aes[[param]]
+      vctrs::vec_slice(data[, param], offsets + 0L) <- params$source.aes[[param]]
     }
 
     for (param in names(params$target.aes)) {
-      if (!param %in% names(data)) {
-        cli::cli_abort("Parameter {.arg {param}} in {.arg target.aes} does not exist in the layer data")
-      }
-      data[,param][offsets + 1L] <- params$target.aes[[param]]
+      vctrs::vec_slice(data[, param], offsets + 1L) <- params$target.aes[[param]]
     }
 
     for (param in names(params$lines.aes)) {
-      if (!param %in% names(data)) {
-        cli::cli_abort("Parameter {.arg {param}} in {.arg lines.aes} does not exist in the layer data")
-      }
-      data[,param][c(offsets + 2L, offsets + 3L)] <- params$lines.aes[[param]]
+      vctrs::vec_slice(data[, param], offsets + 2L) <- params$lines.aes[[param]]
     }
 
     ggplot2::GeomSf$draw_layer(data, params, layout, coord)
@@ -120,80 +155,15 @@ GeomSfInsetFrame <- ggplot2::ggproto("GeomSfInsetFrame", ggplot2::GeomSf,
 # handled by the ggplot machinery, but it will get replaced by the real frame
 # at layout time. It also needs to have a non-NA CRS but the specific choice isn't
 # important (hopefully).
-dummy_burst_circle <- function () {
+dummy_frame <- function() {
   sf::st_sfc(
     sf::st_polygon(),
     sf::st_polygon(),
-    sf::st_linestring(),
-    sf::st_linestring(),
+    sf::st_multilinestring(),
     crs = "+proj=eqc"
   )
 }
 
-make_burst_circle <- function (inset) {
-  crs_working <- inset_crs_working(inset)
-  crs_orig <- sf::st_crs(inset_centre(inset))
-
-  centroid <- sf::st_transform(inset_centre(inset), crs_working)
-  trans <- inset_translation(inset)
-  if (is.null(trans)) trans <- c(0, 0)
-  scale <- inset_scale(inset)
-  if (is.null(scale)) scale <- 1
-  radius <- inset_radius(inset)
-
-  viewport <- sf::st_buffer(centroid, radius)
-  result <- viewport
-
-  if (scale != 1) {
-    result <- (result - centroid) * scale + centroid
-    result <- sf::st_set_crs(result, crs_working)
-  }
-  if (!is.null(inset_translation(inset))) {
-    result <- sf::st_set_crs(result + trans, crs_working)
-  }
-
-  lines <- get_outer_bitangents(centroid[[1]], radius, centroid[[1]] + trans, radius * scale)
-  lines <- sf::st_set_crs(lines, crs_working)
-  lines <- sf::st_transform(lines, crs_orig)
-
-  viewport <- sf::st_transform(viewport, crs_orig)
-  result <- sf::st_transform(result, crs_orig)
-  c(viewport, result, lines)
-}
-
-get_outer_bitangents <- function (centre1, radius1, centre2, radius2) {
-  if (radius2 > radius1) {
-    tmp1 <- radius2
-    tmp2 <- centre2
-    radius2 <- radius1
-    centre2 <- centre1
-    radius1 <- tmp1
-    centre1 <- tmp2
-  }
-
-  hypot <- sqrt((centre2[[1]] - centre1[[1]])^2 + (centre2[[2]] - centre1[[2]])^2)
-  short <- radius1 - radius2
-
-  if (hypot < short) {
-    cli::cli_abort(c("Inset overlaps completely with the source part of the base map",
-                     "x" = "There is no way to draw bitangents (the burst lines)",
-                     "i" = "Adjust {.field translation} or {.field centre} to reduce the overlap"))
-  }
-  # if (hypot < short) return(sf::st_sfc()) # one circle fully inside the other
-  # if (hypot == short)     the lines are degenerate
-  # otherwise               there are 2 external bitangents
-
-  phi1 <- atan2(centre2[[2]] - centre1[[2]], centre2[[1]] - centre1[[1]]) + acos(short / hypot)
-  b1 <- sf::st_sfc(
-    sf::st_point(c(centre1[[1]] + radius1 * cos(phi1), centre1[[2]] + radius1 * sin(phi1))),
-    sf::st_point(c(centre2[[1]] + radius2 * cos(phi1), centre2[[2]] + radius2 * sin(phi1))))
-  b1 <- sf::st_cast(sf::st_union(b1), "LINESTRING")
-
-  phi2 <- atan2(centre2[[2]] - centre1[[2]], centre2[[1]] - centre1[[1]]) - acos(short / hypot)
-  b2 <- sf::st_sfc(
-    sf::st_point(c(centre1[[1]] + radius1 * cos(phi2), centre1[[2]] + radius1 * sin(phi2))),
-    sf::st_point(c(centre2[[1]] + radius2 * cos(phi2), centre2[[2]] + radius2 * sin(phi2))))
-  b2 <- sf::st_cast(sf::st_union(b2), "LINESTRING")
-
-  c(b1, b2)
+make_frame <- function(inset) {
+  UseMethod("make_frame")
 }

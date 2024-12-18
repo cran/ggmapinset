@@ -33,7 +33,19 @@ named by the aesthetics, and the values should be scalars of length one.}
 A ggplot layer holding the inset frame.
 }
 \description{
-Add a frame and burst lines for an inset
+The frame is computed from the inset configuration, so any \code{data} passed
+to this layer is ignored. The frame is an sf object consisting of three features:
+the source area, the target area (a scaled and translated version of the source
+area), and the connecting/burst lines.
+}
+\details{
+Burst lines for circular insets are bitangenets (tangent to both the source and
+target circles) or absent if the circles are nested.
+Burst lines for rectangular insets are the shortest line from each corner of the
+source rectangle to any corner of the target rectangle, after excluding any such
+lines that intersect either rectangle or each other.
+When the burst lines are absent due to geometrical constraints, there will still
+be a corresponding (empty) feature in the frame layer's data.
 }
 \section{Limitation}{
 
@@ -50,8 +62,13 @@ nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
 
 ggplot(nc) +
   geom_sf_inset() +
-  geom_inset_frame() +
+  geom_inset_frame(
+    source.aes = list(fill = "red", alpha = 0.2, linewidth = 0),
+    target.aes = list(colour = "blue"),
+    lines.aes = list(linetype = 2, linewidth = 2)
+  ) +
   coord_sf_inset(inset = configure_inset(
-    centre = sf::st_sfc(sf::st_point(c(-82, 35)), crs = 4326),
-    scale = 2, translation = c(0, -300), radius = 50, units = "mi"))
+    shape_circle(centre = c(-82, 35), radius = 50),
+    scale = 5, translation = c(0, -260), units = "mi"
+  ))
 }
